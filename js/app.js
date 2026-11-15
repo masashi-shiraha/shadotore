@@ -1,7 +1,7 @@
 /* シャドトレ - 英語シャドーイング（PWA版） */
 'use strict';
 
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.0.2';
 
 /* =========================================================
  * 1. 声・地域（訛り）プロファイル
@@ -94,7 +94,9 @@ const DEFAULT_PREFS = {
   dualVoice: true,
   highlight: true,
   isLooping: false,
-  manualVoiceURI: '',
+  manualVoiceF: '',
+  manualVoiceM: '',
+  panelOpen: false,
 };
 
 const KEYS = {
@@ -211,6 +213,12 @@ window.addEventListener('DOMContentLoaded', () => {
   state.isLooping = prefs.isLooping;
   document.getElementById('dualVoiceToggle').checked = prefs.dualVoice;
   document.getElementById('highlightToggle').checked = prefs.highlight;
+  const panel = document.getElementById('listeningControlPanel');
+  panel.open = !!prefs.panelOpen;
+  panel.addEventListener('toggle', () => {
+    prefs.panelOpen = panel.open;
+    savePrefs();
+  });
   setPlaybackRate(state.rate);
   renderLoopButton();
 
@@ -519,6 +527,7 @@ function onScriptClick(event) {
   if (chip) {
     document.querySelectorAll('.active-chip').forEach((el) => el.classList.remove('active-chip'));
     chip.classList.add('active-chip');
+    document.getElementById('phoneticTipBox').classList.remove('hidden');
     document.getElementById('phoneticTipBox').innerHTML =
       `<span class="font-bold text-shadoten-700">🔊 音声変化:</span> ${escapeHtml(chip.dataset.tip || '')}`;
     return;
@@ -587,30 +596,37 @@ function renderManualVoiceSelect() {
     wrap = document.createElement('details');
     wrap.id = 'manualVoiceWrap';
     wrap.className = 'text-[11px] text-slate-600';
-    wrap.innerHTML = `<summary class="cursor-pointer py-1 font-semibold">標準音声：端末の声を手動で選ぶ</summary>
-      <select id="manualVoiceSelect" class="field mt-1 text-sm"></select>
-      <p class="mt-1 text-slate-500">「自動」にすると選んだ地域に合う、端末で一番自然な声を選びます。</p>`;
+    wrap.innerHTML = `<summary class="cursor-pointer py-1 font-semibold">標準音声：端末の声を自分で選ぶ（男性・女性）</summary>
+      <label class="block mt-1">女性の声<select id="manualVoiceF" class="field mt-0.5 text-sm"></select></label>
+      <label class="block mt-2">男性の声<select id="manualVoiceM" class="field mt-0.5 text-sm"></select></label>
+      <p class="mt-1.5 text-slate-500 leading-relaxed">★＝高音質（拡張・Premium）。iPhoneは「設定 → アクセシビリティ → 読み上げコンテンツ → 声 → 英語」で、Evan・Nathan・Tom などの「拡張」版をダウンロードすると、男性の声がかなり自然になります。</p>`;
     document.getElementById('voiceProfileNote').after(wrap);
-    wrap.querySelector('select').addEventListener('change', (e) => {
-      prefs.manualVoiceURI = e.target.value;
-      savePrefs();
-      updateEngineBadge();
-      restartIfPlaying();
+    ['F', 'M'].forEach((g) => {
+      wrap.querySelector('#manualVoice' + g).addEventListener('change', (e) => {
+        prefs['manualVoice' + g] = e.target.value;
+        savePrefs();
+        updateEngineBadge();
+        restartIfPlaying();
+      });
     });
   }
-  const sel = document.getElementById('manualVoiceSelect');
   const relevant = state.voices
-    .filter((v) => /^(en|th|vi|id|ms)/i.test(v.lang || ''))
-    .sort((a, b) => (a.lang || '').localeCompare(b.lang || '') || voiceQuality(b) - voiceQuality(a));
-  sel.innerHTML =
-    `<option value="">自動（おすすめ）</option>` +
-    relevant
-      .map((v) => `<option value="${escapeHtml(v.voiceURI)}" ${v.voiceURI === prefs.manualVoiceURI ? 'selected' : ''}>${escapeHtml(v.name)} (${escapeHtml(v.lang)})</option>`)
-      .join('');
+    .filter((v) => /^(en|th|vi|id|ms)/i.test(v.lang || '') && !NOVELTY_RE.test(v.name || ''))
+    .sort((a, b) => voiceQuality(b) - voiceQuality(a) || (a.lang || '').localeCompare(b.lang || ''));
+  ['F', 'M'].forEach((g) => {
+    const want = g.toLowerCase();
+    const list = relevant.filter((v) => voiceGender(v) === want).concat(relevant.filter((v) => !voiceGender(v)));
+    const cur = prefs['manualVoice' + g] || '';
+    document.getElementById('manualVoice' + g).innerHTML =
+      `<option value="">自動（おすすめ）</option>` +
+      list
+        .map((v) => `<option value="${escapeHtml(v.voiceURI)}" ${v.voiceURI === cur ? 'selected' : ''}>${isHighQuality(v) ? '★ ' : ''}${escapeHtml(v.name)} (${escapeHtml(v.lang)})</option>`)
+        .join('');
+  });
 }
 
 const FEMALE_VOICE_RE = /female|woman|samantha|\bava\b|allison|susan|zira|aria|jenny|michelle|emma|libby|sonia|serena|\bkate\b|karen|moira|tessa|fiona|victoria|catherine|natasha|kanya|linh|damayanti|google us english|nicky|joanna|salli|kendra|kimberly|\bivy\b|\bamy\b|olivia|zoe|hazel|heera|neerja|clara|ana\b|sara|veena|lekha|luna|nova|siri.*(female)/i;
-const MALE_VOICE_RE = /\bmale\b|\bman\b|daniel|\balex\b|\btom\b|aaron|\bfred\b|\bguy\b|ryan|david|\bmark\b|\blee\b|arthur|oliver|gordon|rishi|thomas|brian|christopher|\beric\b|roger|william|james|matthew|justin|joey|russell|george|prabhat|ravi|william|liam|andrew|nam\b|ardi|siri.*(male)/i;
+const MALE_VOICE_RE = /\bmale\b|\bman\b|evan|nathan|noah|daniel|\balex\b|\btom\b|aaron|\bfred\b|\bguy\b|ryan|david|\bmark\b|\blee\b|arthur|oliver|gordon|rishi|thomas|brian|christopher|\beric\b|roger|william|james|matthew|justin|joey|russell|george|prabhat|ravi|william|liam|andrew|nam\b|ardi|siri.*(male)/i;
 
 function voiceGender(v) {
   const n = v.name || '';
@@ -619,15 +635,22 @@ function voiceGender(v) {
   return '';
 }
 
+/* 声の優先度。中国からはGoogle等のネット経由の声は無音になりやすいので、端末内の声を優先する。
+ * 高音質（拡張・Premium）の声は優先するが、端末に入っておらず鳴らなかった場合は自動で次の声に切り替わる */
+const NOVELTY_RE = /eloquence|novelty|bells|bubbles|boing|zarvox|whisper|trinoids|organ|cellos|jester|superstar|wobble|bad news|good news|albert|junior|ralph|kathy|grandma|grandpa|rocko|shelley|\bflo\b|eddy|reed|sandy|\bfred\b/i;
+function isHighQuality(v) {
+  return /premium|enhanced|natural|neural|プレミアム|拡張|高品質/i.test(v.name || '');
+}
 function voiceQuality(v) {
   const n = v.name || '';
   let s = 0;
-  if (/natural|neural|premium|enhanced|プレミアム|拡張/i.test(n)) s += 4;
-  if (/online/i.test(n)) s += 3;
-  if (/google/i.test(n)) s += 2;
-  if (/siri/i.test(n)) s += 2;
-  if (/compact|eloquence|novelty|bells|bubbles|boing|zarvox|whisper|trinoids|organ|cellos|jester|superstar|wobble|bad news|good news|albert|junior|ralph|kathy|grandma|grandpa|rocko|shelley|flo|eddy|reed|sandy/i.test(n)) s -= 6;
-  if (v.localService === false) s += 1;
+  if (badVoices.has(v.voiceURI)) s -= 100; // 実際に鳴らなかった声
+  if (v.localService !== false) s += 4; else s -= 4;
+  if (isHighQuality(v)) s += 5;
+  if (/^(samantha|daniel|karen|moira|tessa|rishi|nicky|kate|serena|lee|martha|arthur|catherine|gordon|evan|nathan|tom|noah|kanya|linh|damayanti)\b/i.test(n)) s += 2;
+  if (/^aaron\b/i.test(n) && !isHighQuality(v)) s -= 1;
+  if (v.default) s += 1;
+  if (NOVELTY_RE.test(n)) s -= 20; // Fredなどの機械的・おもしろ系の声
   return s;
 }
 
@@ -636,22 +659,32 @@ function normLang(l) {
 }
 
 function pickBrowserVoice(profile, gender) {
-  if (prefs.manualVoiceURI) {
-    const v = state.voices.find((x) => x.voiceURI === prefs.manualVoiceURI);
-    if (v) return { voice: v, genderMatched: voiceGender(v) === gender };
+  const manual = prefs[gender === 'm' ? 'manualVoiceM' : 'manualVoiceF'];
+  if (manual && !badVoices.has(manual)) {
+    const v = state.voices.find((x) => x.voiceURI === manual);
+    if (v) return { voice: v, genderMatched: true, manual: true };
   }
+  const score = (v) => voiceQuality(v) + (voiceGender(v) === gender ? 6 : voiceGender(v) ? -4 : 0);
+  let best = null;
   for (const lang of profile.browser.langs) {
     const want = lang.toLowerCase();
-    const cands = state.voices.filter((v) => normLang(v.lang) === want);
+    const cands = state.voices.filter((v) => normLang(v.lang) === want && !badVoices.has(v.voiceURI) && !NOVELTY_RE.test(v.name || ''));
     if (cands.length === 0) continue;
-    const ranked = cands
-      .map((v) => ({ v, score: voiceQuality(v) + (voiceGender(v) === gender ? 5 : voiceGender(v) ? -3 : 0) }))
-      .sort((a, b) => b.score - a.score);
-    const best = ranked[0].v;
-    return { voice: best, genderMatched: voiceGender(best) === gender };
+    best = cands.sort((a, b) => score(b) - score(a))[0];
+    break;
   }
-  const anyEn = state.voices.filter((v) => normLang(v.lang).startsWith('en')).sort((a, b) => voiceQuality(b) - voiceQuality(a));
-  return { voice: anyEn[0] || null, genderMatched: false };
+  // 同じ国の自然な声がない（男性がいない等）ときは、他の英語圏の自然な同性の声で代用
+  const poor = (v) => /^aaron\b/i.test(v.name || '') && !isHighQuality(v); // iPhone標準の男性声は機械的
+  const good = (v) => v && voiceGender(v) === gender && v.localService !== false && !poor(v);
+  if (!good(best) && !profile.regional) {
+    const alt = state.voices
+      .filter((v) => normLang(v.lang).startsWith('en') && !badVoices.has(v.voiceURI) && !NOVELTY_RE.test(v.name || '') && voiceGender(v) === gender && !poor(v))
+      .sort((a, b) => score(b) - score(a))[0];
+    if (alt && voiceQuality(alt) >= 4) return { voice: alt, genderMatched: true, substituted: true };
+  }
+  if (best) return { voice: best, genderMatched: voiceGender(best) === gender };
+  const anyEn = state.voices.filter((v) => normLang(v.lang).startsWith('en') && !badVoices.has(v.voiceURI) && !NOVELTY_RE.test(v.name || '')).sort((a, b) => score(b) - score(a));
+  return { voice: anyEn[0] || null, genderMatched: anyEn[0] ? voiceGender(anyEn[0]) === gender : false };
 }
 
 /* 話者 → 男女の割り当て（Maya / Steve の声質切替） */
@@ -718,13 +751,16 @@ function updateEngineBadge() {
   };
   const [text, cls] = map[effective];
   badge.textContent = text;
+  document.getElementById('summaryVoice').textContent = `${profile.label.replace(/（.*$/, '')} ・ ${effective === 'browser' ? '標準音声' : 'AI音声'}`;
   badge.className = `text-[11px] font-semibold px-2 py-0.5 rounded-md ${cls}`;
 
   let msg = '';
   if (effective === 'browser') {
-    const pick = pickBrowserVoice(profile, profile.gender);
-    const vname = pick.voice ? `${pick.voice.name}（${pick.voice.lang}）` : '端末の標準音声';
-    msg = `端末の声: ${vname}。`;
+    const fv = pickBrowserVoice(profile, 'f');
+    const mv = pickBrowserVoice(profile, 'm');
+    const nm = (p) => (p.voice ? `${p.voice.name}（${p.voice.lang}）` : '端末の標準');
+    msg = `端末の声 ─ 女性: ${nm(fv)} ／ 男性: ${nm(mv)}${mv.substituted ? '※同じ国の自然な男性の声がないため代用' : ''}。`;
+    if (mv.voice && !isHighQuality(mv.voice) && isIOS()) msg += ' 男性の声が不自然なときは下の「端末の声を自分で選ぶ」の説明を参照。';
     if (profile.regional) {
       msg += ' 標準音声では訛りは「雰囲気」程度です。本格的な訛りは設定でAI音声のキーを登録してください。';
     } else if (!state.aiDisabledForSession && !settings.openaiKey && !settings.elevenKey) {
@@ -751,6 +787,7 @@ function setPlaybackRate(newRate, syncSlider = true) {
   savePrefs();
   if (syncSlider) document.getElementById('speedSlider').value = clamped;
   document.getElementById('speedValueDisplay').textContent = `${clamped.toFixed(2)}x`;
+  document.getElementById('summarySpeed').textContent = `${clamped.toFixed(2)}x`;
   updateEstimatedRateWpm();
   document.querySelectorAll('.rate-preset').forEach((btn) => {
     btn.classList.toggle('rate-preset-active', Math.abs(parseFloat(btn.textContent) - clamped) < 0.01);
@@ -812,6 +849,8 @@ function playFromSentence(index) {
   haltAudio();
   state.isPlaying = true;
   state.isPaused = false;
+  state.silentRetries = 0;
+  maybeShowMuteHint();
   updatePlayButtonUI('playing');
   requestWakeLock();
   speakSentenceAtIndex(safeIdx);
@@ -823,7 +862,14 @@ function restartIfPlaying() {
 
 function haltAudio() {
   state.playToken++;
-  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  clearTimeout(state.speechWatchdog);
+  if ('speechSynthesis' in window) {
+    const ss = window.speechSynthesis;
+    if (ss.speaking || ss.pending || ss.paused) {
+      ss.cancel();
+      state.justCanceled = Date.now();
+    }
+  }
   ttsAudio.onended = null;
   ttsAudio.pause();
 }
@@ -875,12 +921,123 @@ function speakBrowser(idx, token) {
   if (!genderMatched) pitch *= gender === 'm' ? 0.84 : 1.12;
   u.pitch = Math.min(2, Math.max(0.5, pitch));
 
-  u.onend = () => goNextAfter(idx, token);
+  // 無音検知：声が端末に無い・ネット経由で届かない等で「鳴らずに一瞬で終わる」場合は別の声で再挑戦
+  const expectedMs = (countWords(item.text) / (2.6 * u.rate)) * 1000;
+  let startedAt = 0;
+  let gotStart = false;
+  const usedVoice = voice ? voice.voiceURI : '';
+  const retrySilent = (reason) => {
+    if (token !== state.playToken) return;
+    clearTimeout(state.speechWatchdog);
+    if (usedVoice) {
+      badVoices.add(usedVoice);
+      updateEngineBadge();
+      renderManualVoiceSelect();
+    }
+    state.silentRetries = (state.silentRetries || 0) + 1;
+    if (state.silentRetries <= 4) {
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+      speakBrowser(idx, token);
+    } else {
+      stopSpeech(false);
+      reportNoSound(reason);
+    }
+  };
+  u.onstart = () => {
+    gotStart = true;
+    startedAt = performance.now();
+  };
+  u.onend = () => {
+    if (token !== state.playToken) return;
+    clearTimeout(state.speechWatchdog);
+    const elapsed = startedAt ? performance.now() - startedAt : 0;
+    if (expectedMs > 900 && (!gotStart || elapsed < Math.max(200, expectedMs * 0.15))) return retrySilent('fast-end');
+    state.silentRetries = 0;
+    goNextAfter(idx, token);
+  };
   u.onerror = (e) => {
     if (token !== state.playToken) return;
-    if (e.error !== 'interrupted' && e.error !== 'canceled') stopSpeech(false);
+    if (e.error === 'interrupted' || e.error === 'canceled') return;
+    if (e.error === 'not-allowed') {
+      stopSpeech(false);
+      return showToast('▶ ボタンをもう一度タップしてください（端末が自動再生を止めました）', 4000);
+    }
+    retrySilent(e.error || 'error');
   };
-  window.speechSynthesis.speak(u);
+  state.currentUtterance = u; // Chromeで再生途中に消える不具合の対策
+  state.speechWatchdog = setTimeout(() => {
+    if (token !== state.playToken || state.isPaused) return;
+    if (!gotStart) retrySilent('no-start');
+  }, 4000);
+
+  const ss = window.speechSynthesis;
+  if (ss.paused) ss.resume();
+  // iOS/Chromeは cancel() 直後の speak() を無視することがあるので少し待つ
+  if (state.justCanceled && Date.now() - state.justCanceled < 150 && audioUnlocked) {
+    setTimeout(() => token === state.playToken && ss.speak(u), 120);
+  } else {
+    ss.speak(u);
+  }
+  audioUnlocked = true;
+}
+
+function isIOS() {
+  return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+function maybeShowMuteHint() {
+  if (!isIOS() || resolveEngine() !== 'browser') return;
+  if (localStorage.getItem('shadotore.muteHintShown')) return;
+  localStorage.setItem('shadotore.muteHintShown', '1');
+  showToast('音が出ないときは、マナーモード（消音）をオフにして音量を上げてください。', 6000);
+}
+
+/* 設定画面の「音声テスト」：今の設定で1文鳴らし、端末の音声の状態を表示 */
+function runVoiceTest() {
+  unlockAudio();
+  const el = document.getElementById('voiceDiag');
+  const profile = getProfile();
+  const engine = resolveEngine();
+  const en = state.voices.filter((v) => normLang(v.lang).startsWith('en'));
+  const pick = pickBrowserVoice(profile, profile.gender);
+  const lines = [
+    `音声エンジン: ${engine === 'browser' ? '標準ブラウザ音声' : engine}`,
+    `端末の声: 全${state.voices.length}件／英語${en.length}件（端末内 ${en.filter((v) => v.localService !== false).length}件）`,
+    `使う声: ${pick.voice ? `${pick.voice.name} (${pick.voice.lang}${pick.voice.localService === false ? '・ネット経由' : ''})` : 'なし（端末の既定）'}`,
+    `鳴らなかった声: ${badVoices.size}件`,
+    `iOS消音対策: ${navigator.audioSession ? '有効' : '非対応のOS'}`,
+  ];
+  el.textContent = lines.join('\n');
+  el.classList.remove('hidden');
+  const backup = state.sentences;
+  state.sentences = [{ id: 't', lineIdx: 0, speaker: '', text: 'This is a sound test. Can you hear me clearly?', highlights: [], partTitle: '' }];
+  state.isPlaying = true;
+  state.isPaused = false;
+  state.silentRetries = 0;
+  haltAudio();
+  const token = state.playToken;
+  const restore = () => {
+    state.testRestore = null;
+    state.sentences = backup;
+    state.isPlaying = false;
+    state.currentSentenceIndex = -1;
+    updatePlayButtonUI('stopped');
+  };
+  state.testRestore = restore;
+  if (engine === 'browser') speakBrowser(0, token);
+  else speakAI(0, token, engine);
+  setTimeout(() => {
+    if (state.testRestore === restore) stopSpeech(true);
+  }, 8000);
+}
+
+function reportNoSound() {
+  const ios = isIOS();
+  const enCount = state.voices.filter((v) => normLang(v.lang).startsWith('en')).length;
+  let msg;
+  if (ios) msg = '音が出ません。マナーモード（消音）をオフにして音量を上げてから、もう一度▶を押してください。';
+  else if (enCount === 0) msg = 'この端末に英語の読み上げ音声がありません。端末の設定「テキスト読み上げ」で英語の音声を追加してください。';
+  else msg = '端末の読み上げ音声が鳴りませんでした。音量と、端末の設定「テキスト読み上げ」のエンジンを確認してください。';
+  showToast(msg, 7000);
 }
 
 /* --- AI音声（OpenAI / ElevenLabs） --- */
@@ -1007,9 +1164,16 @@ function shortErr(err) {
 
 /* iOS: 最初のタップで音声再生を許可させる */
 let audioUnlocked = false;
+let htmlAudioUnlocked = false;
+const badVoices = new Set();
 function unlockAudio() {
-  if (audioUnlocked) return;
-  audioUnlocked = true;
+  // iOS 17以降：消音スイッチがオンでもアプリの音を鳴らす設定
+  try {
+    if (navigator.audioSession && navigator.audioSession.type !== 'playback') navigator.audioSession.type = 'playback';
+  } catch (e) {}
+  // 標準音声で再生するときはHTML音声を鳴らさない（iOSで読み上げが無音になる原因になる）
+  if (htmlAudioUnlocked || resolveEngine() === 'browser') return;
+  htmlAudioUnlocked = true;
   try {
     ttsAudio.src = silentWavUrl();
     const p = ttsAudio.play();
@@ -1029,6 +1193,7 @@ function silentWavUrl() {
 
 function stopSpeech(resetIndex = true) {
   haltAudio();
+  if (state.testRestore) state.testRestore();
   state.isPlaying = false;
   state.isPaused = false;
   if (resetIndex) state.currentSentenceIndex = -1;
@@ -1087,8 +1252,8 @@ function highlightActiveSentence(idx) {
     if (el) {
       el.classList.add('sentence-active');
       const r = el.getBoundingClientRect();
-      const bottomBar = document.getElementById('bottomBar').offsetHeight;
-      if (r.top < 140 || r.bottom > window.innerHeight - bottomBar - 20) {
+      const area = document.getElementById('scrollArea').getBoundingClientRect();
+      if (r.top < area.top + 8 || r.bottom > area.bottom - 8) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     }
@@ -1340,7 +1505,7 @@ function saveMaterial() {
   closeAddSheet();
   selectPart(id);
   showToast(state.editingMaterialId ? '教材を更新しました' : '教材を保存しました');
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  document.getElementById('scrollArea').scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function editCurrentMaterial() {
