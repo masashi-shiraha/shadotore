@@ -1,0 +1,19 @@
+{
+  "name": "シャドトレ - 英語シャドーイング",
+  "short_name": "シャドトレ",
+  "description": "WPM自動測定・音の繋がりハイライト・AI音声で練習できる英語シャドーイングアプリ",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#27a6a3",
+  "background_color": "#f8fafc",
+  "lang": "ja",
+  "categories": ["education"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
