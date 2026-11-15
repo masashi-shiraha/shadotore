@@ -1,7 +1,7 @@
 /* シャドトレ - 英語シャドーイング（PWA版） */
 'use strict';
 
-const APP_VERSION = '2.0.2';
+const APP_VERSION = '2.0.3';
 
 /* =========================================================
  * 1. 声・地域（訛り）プロファイル
@@ -611,7 +611,7 @@ function renderManualVoiceSelect() {
     });
   }
   const relevant = state.voices
-    .filter((v) => /^(en|th|vi|id|ms)/i.test(v.lang || '') && !NOVELTY_RE.test(v.name || ''))
+    .filter((v) => /^(en|th|vi|id|ms)/i.test(v.lang || '') && !isNovelty(v))
     .sort((a, b) => voiceQuality(b) - voiceQuality(a) || (a.lang || '').localeCompare(b.lang || ''));
   ['F', 'M'].forEach((g) => {
     const want = g.toLowerCase();
@@ -620,7 +620,7 @@ function renderManualVoiceSelect() {
     document.getElementById('manualVoice' + g).innerHTML =
       `<option value="">自動（おすすめ）</option>` +
       list
-        .map((v) => `<option value="${escapeHtml(v.voiceURI)}" ${v.voiceURI === cur ? 'selected' : ''}>${isHighQuality(v) ? '★ ' : ''}${escapeHtml(v.name)} (${escapeHtml(v.lang)})</option>`)
+        .map((v) => `<option value="${escapeHtml(v.voiceURI)}" ${v.voiceURI === cur ? 'selected' : ''}>${escapeHtml(voiceLabel(v))}</option>`)
         .join('');
   });
 }
@@ -628,8 +628,32 @@ function renderManualVoiceSelect() {
 const FEMALE_VOICE_RE = /female|woman|samantha|\bava\b|allison|susan|zira|aria|jenny|michelle|emma|libby|sonia|serena|\bkate\b|karen|moira|tessa|fiona|victoria|catherine|natasha|kanya|linh|damayanti|google us english|nicky|joanna|salli|kendra|kimberly|\bivy\b|\bamy\b|olivia|zoe|hazel|heera|neerja|clara|ana\b|sara|veena|lekha|luna|nova|siri.*(female)/i;
 const MALE_VOICE_RE = /\bmale\b|\bman\b|evan|nathan|noah|daniel|\balex\b|\btom\b|aaron|\bfred\b|\bguy\b|ryan|david|\bmark\b|\blee\b|arthur|oliver|gordon|rishi|thomas|brian|christopher|\beric\b|roger|william|james|matthew|justin|joey|russell|george|prabhat|ravi|william|liam|andrew|nam\b|ardi|siri.*(male)/i;
 
+/* iPhoneは声の名前が日本語になる（ベル・道化など）ので、voiceURI（英語の内部名）も見て判定する */
+function voiceUriKey(v) {
+  const u = String(v.voiceURI || '');
+  return u.split(/[.\/]/).pop() || '';
+}
+function voiceTier(v) {
+  const u = String(v.voiceURI || '');
+  if (/premium/i.test(u) || /premium|プレミアム/i.test(v.name || '')) return 'premium';
+  if (/enhanced/i.test(u) || /enhanced|拡張|高品質|natural|neural/i.test(v.name || '')) return 'enhanced';
+  if (/siri/i.test(u)) return 'siri';
+  if (/compact/i.test(u)) return 'compact';
+  return '';
+}
+const JP_NOVELTY_RE = /ベル|震え|道化|オルガン|スーパースター|トリノイド|ささやき|バブル|ボイン|知らせ|チェロ|ザーボックス|ゼルボックス|ジュニア|ラルフ|キャシー|アルバート|ロッコ|おじいさん|おばあさん|グランマ|グランパ|シェリー|フロー|エディ|リード|サンディ|フレッド|bahh/i;
+function isNovelty(v) {
+  const u = String(v.voiceURI || '');
+  return NOVELTY_RE.test(v.name || '') || NOVELTY_RE.test(voiceUriKey(v)) || JP_NOVELTY_RE.test(v.name || '') || /eloquence/i.test(u) || (isIOS() && /speech\.synthesis\.voice\./i.test(u));
+}
+function voiceLabel(v) {
+  const tier = voiceTier(v);
+  const tag = { premium: '高音質Premium', enhanced: '高音質', siri: '標準', compact: '標準' }[tier];
+  return `${isHighQuality(v) ? '★ ' : ''}${v.name}${tag ? `［${tag}］` : ''} (${v.lang})`;
+}
+
 function voiceGender(v) {
-  const n = v.name || '';
+  const n = (v.name || '') + ' ' + voiceUriKey(v);
   if (FEMALE_VOICE_RE.test(n)) return 'f';
   if (MALE_VOICE_RE.test(n)) return 'm';
   return '';
@@ -637,9 +661,10 @@ function voiceGender(v) {
 
 /* 声の優先度。中国からはGoogle等のネット経由の声は無音になりやすいので、端末内の声を優先する。
  * 高音質（拡張・Premium）の声は優先するが、端末に入っておらず鳴らなかった場合は自動で次の声に切り替わる */
-const NOVELTY_RE = /eloquence|novelty|bells|bubbles|boing|zarvox|whisper|trinoids|organ|cellos|jester|superstar|wobble|bad news|good news|albert|junior|ralph|kathy|grandma|grandpa|rocko|shelley|\bflo\b|eddy|reed|sandy|\bfred\b/i;
+const NOVELTY_RE = /eloquence|novelty|bells|bubbles|boing|zarvox|whisper|trinoids|organ|cellos|jester|superstar|wobble|bad ?news|good ?news|albert|junior|ralph|kathy|grandma|grandpa|rocko|shelley|\bflo\b|eddy|reed|sandy|\bfred\b|\bbahh\b|hysterical|deranged|pipe ?organ/i;
 function isHighQuality(v) {
-  return /premium|enhanced|natural|neural|プレミアム|拡張|高品質/i.test(v.name || '');
+  const t = voiceTier(v);
+  return t === 'premium' || t === 'enhanced';
 }
 function voiceQuality(v) {
   const n = v.name || '';
@@ -647,10 +672,11 @@ function voiceQuality(v) {
   if (badVoices.has(v.voiceURI)) s -= 100; // 実際に鳴らなかった声
   if (v.localService !== false) s += 4; else s -= 4;
   if (isHighQuality(v)) s += 5;
-  if (/^(samantha|daniel|karen|moira|tessa|rishi|nicky|kate|serena|lee|martha|arthur|catherine|gordon|evan|nathan|tom|noah|kanya|linh|damayanti)\b/i.test(n)) s += 2;
-  if (/^aaron\b/i.test(n) && !isHighQuality(v)) s -= 1;
+  const k = voiceUriKey(v);
+  if (/^(samantha|daniel|karen|moira|tessa|rishi|nicky|kate|serena|lee|martha|arthur|catherine|gordon|evan|nathan|tom|noah|kanya|linh|damayanti)\b/i.test(n) || /^(evan|nathan|tom|noah|daniel|arthur)$/i.test(k)) s += 2;
+  if ((/^aaron\b/i.test(n) || /^aaron$/i.test(k)) && !isHighQuality(v)) s -= 1;
   if (v.default) s += 1;
-  if (NOVELTY_RE.test(n)) s -= 20; // Fredなどの機械的・おもしろ系の声
+  if (isNovelty(v)) s -= 20; // Fredなどの機械的・おもしろ系の声
   return s;
 }
 
@@ -668,22 +694,22 @@ function pickBrowserVoice(profile, gender) {
   let best = null;
   for (const lang of profile.browser.langs) {
     const want = lang.toLowerCase();
-    const cands = state.voices.filter((v) => normLang(v.lang) === want && !badVoices.has(v.voiceURI) && !NOVELTY_RE.test(v.name || ''));
+    const cands = state.voices.filter((v) => normLang(v.lang) === want && !badVoices.has(v.voiceURI) && !isNovelty(v));
     if (cands.length === 0) continue;
     best = cands.sort((a, b) => score(b) - score(a))[0];
     break;
   }
   // 同じ国の自然な声がない（男性がいない等）ときは、他の英語圏の自然な同性の声で代用
-  const poor = (v) => /^aaron\b/i.test(v.name || '') && !isHighQuality(v); // iPhone標準の男性声は機械的
+  const poor = (v) => (/^aaron\b/i.test(v.name || '') || /^aaron$/i.test(voiceUriKey(v))) && !isHighQuality(v); // iPhone標準の男性声は機械的
   const good = (v) => v && voiceGender(v) === gender && v.localService !== false && !poor(v);
   if (!good(best) && !profile.regional) {
     const alt = state.voices
-      .filter((v) => normLang(v.lang).startsWith('en') && !badVoices.has(v.voiceURI) && !NOVELTY_RE.test(v.name || '') && voiceGender(v) === gender && !poor(v))
+      .filter((v) => normLang(v.lang).startsWith('en') && !badVoices.has(v.voiceURI) && !isNovelty(v) && voiceGender(v) === gender && !poor(v))
       .sort((a, b) => score(b) - score(a))[0];
     if (alt && voiceQuality(alt) >= 4) return { voice: alt, genderMatched: true, substituted: true };
   }
   if (best) return { voice: best, genderMatched: voiceGender(best) === gender };
-  const anyEn = state.voices.filter((v) => normLang(v.lang).startsWith('en') && !badVoices.has(v.voiceURI) && !NOVELTY_RE.test(v.name || '')).sort((a, b) => score(b) - score(a));
+  const anyEn = state.voices.filter((v) => normLang(v.lang).startsWith('en') && !badVoices.has(v.voiceURI) && !isNovelty(v)).sort((a, b) => score(b) - score(a));
   return { voice: anyEn[0] || null, genderMatched: anyEn[0] ? voiceGender(anyEn[0]) === gender : false };
 }
 
@@ -758,7 +784,7 @@ function updateEngineBadge() {
   if (effective === 'browser') {
     const fv = pickBrowserVoice(profile, 'f');
     const mv = pickBrowserVoice(profile, 'm');
-    const nm = (p) => (p.voice ? `${p.voice.name}（${p.voice.lang}）` : '端末の標準');
+    const nm = (p) => (p.voice ? voiceLabel(p.voice) : '端末の標準');
     msg = `端末の声 ─ 女性: ${nm(fv)} ／ 男性: ${nm(mv)}${mv.substituted ? '※同じ国の自然な男性の声がないため代用' : ''}。`;
     if (mv.voice && !isHighQuality(mv.voice) && isIOS()) msg += ' 男性の声が不自然なときは下の「端末の声を自分で選ぶ」の説明を参照。';
     if (profile.regional) {
@@ -1002,7 +1028,8 @@ function runVoiceTest() {
   const lines = [
     `音声エンジン: ${engine === 'browser' ? '標準ブラウザ音声' : engine}`,
     `端末の声: 全${state.voices.length}件／英語${en.length}件（端末内 ${en.filter((v) => v.localService !== false).length}件）`,
-    `使う声: ${pick.voice ? `${pick.voice.name} (${pick.voice.lang}${pick.voice.localService === false ? '・ネット経由' : ''})` : 'なし（端末の既定）'}`,
+    `使う声: 女性 ${pickBrowserVoice(profile, 'f').voice ? voiceLabel(pickBrowserVoice(profile, 'f').voice) : '端末の既定'} ／ 男性 ${pickBrowserVoice(profile, 'm').voice ? voiceLabel(pickBrowserVoice(profile, 'm').voice) : '端末の既定'}`,
+    `高音質(★)の英語の声: ${en.filter(isHighQuality).map((v) => v.name).join(', ') || 'なし'}`,
     `鳴らなかった声: ${badVoices.size}件`,
     `iOS消音対策: ${navigator.audioSession ? '有効' : '非対応のOS'}`,
   ];
