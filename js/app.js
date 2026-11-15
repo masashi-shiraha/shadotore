@@ -1,7 +1,7 @@
 /* シャドトレ - 英語シャドーイング（PWA版） */
 'use strict';
 
-const APP_VERSION = '2.0.3';
+const APP_VERSION = '2.0.4';
 
 /* =========================================================
  * 1. 声・地域（訛り）プロファイル
@@ -599,7 +599,7 @@ function renderManualVoiceSelect() {
     wrap.innerHTML = `<summary class="cursor-pointer py-1 font-semibold">標準音声：端末の声を自分で選ぶ（男性・女性）</summary>
       <label class="block mt-1">女性の声<select id="manualVoiceF" class="field mt-0.5 text-sm"></select></label>
       <label class="block mt-2">男性の声<select id="manualVoiceM" class="field mt-0.5 text-sm"></select></label>
-      <p class="mt-1.5 text-slate-500 leading-relaxed">★＝高音質（拡張・Premium）。iPhoneは「設定 → アクセシビリティ → 読み上げコンテンツ → 声 → 英語」で、Evan・Nathan・Tom などの「拡張」版をダウンロードすると、男性の声がかなり自然になります。</p>`;
+      <p class="mt-1.5 text-slate-500 leading-relaxed">★＝高音質（拡張・Premium）。※iPhone/iPadは、設定でダウンロードした拡張・Premiumの声をWebアプリに渡さない仕様のため、ここには出ません。より自然な声は設定画面のAI音声を使ってください。</p>`;
     document.getElementById('voiceProfileNote').after(wrap);
     ['F', 'M'].forEach((g) => {
       wrap.querySelector('#manualVoice' + g).addEventListener('change', (e) => {
@@ -786,7 +786,7 @@ function updateEngineBadge() {
     const mv = pickBrowserVoice(profile, 'm');
     const nm = (p) => (p.voice ? voiceLabel(p.voice) : '端末の標準');
     msg = `端末の声 ─ 女性: ${nm(fv)} ／ 男性: ${nm(mv)}${mv.substituted ? '※同じ国の自然な男性の声がないため代用' : ''}。`;
-    if (mv.voice && !isHighQuality(mv.voice) && isIOS()) msg += ' 男性の声が不自然なときは下の「端末の声を自分で選ぶ」の説明を参照。';
+    if (mv.voice && !isHighQuality(mv.voice) && isIOS()) msg += ' iPhoneはWebアプリで使える声が限られるため、より自然な声はAI音声（設定でキー登録）がおすすめ。';
     if (profile.regional) {
       msg += ' 標準音声では訛りは「雰囲気」程度です。本格的な訛りは設定でAI音声のキーを登録してください。';
     } else if (!state.aiDisabledForSession && !settings.openaiKey && !settings.elevenKey) {
