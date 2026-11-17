@@ -1,7 +1,7 @@
 /* シャドトレ - 英語シャドーイング（PWA版） */
 'use strict';
 
-const APP_VERSION = '2.2.0';
+const APP_VERSION = '2.2.1';
 
 /* =========================================================
  * 1. 声・地域（訛り）プロファイル
@@ -835,7 +835,7 @@ function setPlaybackRate(newRate, syncSlider = true) {
 }
 
 function updateEstimatedRateWpm() {
-  document.getElementById('estimatedWpmBadge').textContent = `目安: 約${Math.round(160 * state.rate)} WPM`;
+  document.getElementById('estimatedWpmBadge').textContent = `目安: 約${Math.round(165 * state.rate)} WPM`;
 }
 
 function setStatus(text) {
@@ -1241,7 +1241,7 @@ function prefetchAhead(idx, engine, n) {
 /* ---- AI音声の後処理 ----
  * 1) 音声の前後に入っている無音を削る（文と文の間が間延びする一番の原因）
  * 2) 実際の話す速さを測り、×1.0 でネイティブの普通の速さ（約165 WPM）になるよう基準速度を補正 */
-const AI_TARGET_WPM = 190; // 実機評価：200だと少し速い → 190（ネイティブ基準150〜200の上寄り）
+const AI_TARGET_WPM = 165; // 実機評価で調整（200→190→165）。ユーザー希望：×1.0＝160〜170 WPM
 const processedCache = new Map();
 let audioCtx = null;
 state.aiSpeedFactor = prefs.aiSpeedFactor3 || 1.4; // 文ごとの補正の平均（短い文用）
