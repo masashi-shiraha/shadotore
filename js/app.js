@@ -1,7 +1,7 @@
 /* シャドトレ - 英語シャドーイング（PWA版） */
 'use strict';
 
-const APP_VERSION = '2.1.1';
+const APP_VERSION = '2.1.2';
 
 /* =========================================================
  * 1. 声・地域（訛り）プロファイル
@@ -924,13 +924,24 @@ function goNextAfter(idx, token) {
   if (token !== state.playToken || !state.isPlaying || state.isPaused) return;
   const item = state.sentences[idx];
   if (item) state.meter.words += countWords(item.text);
+  if (state.lastEngineUsed === 'ai') tuneAiSpeed();
   speakSentenceAtIndex(idx + 1);
 }
 
 /* 実測WPM：再生開始からの「読んだ単語数 ÷ 経過時間（文の間の待ち時間も含む）」 */
-state.meter = { t0: 0, words: 0, pausedAt: 0, pausedMs: 0 };
+state.meter = { t0: 0, words: 0, pausedAt: 0, pausedMs: 0, loadMs: 0 };
 function meterReset() {
-  state.meter = { t0: performance.now(), words: 0, pausedAt: 0, pausedMs: 0 };
+  state.meter = { t0: performance.now(), words: 0, pausedAt: 0, pausedMs: 0, loadMs: 0 };
+}
+/* 実測WPMを見ながら補正を微調整し、×1.0 で目標（約200 WPM）に近づける。文の間のすき間も含めて合わせる */
+function tuneAiSpeed() {
+  const w = measuredWpm();
+  if (!w) return;
+  const adj = Math.min(1.04, Math.max(0.96, Math.sqrt(AI_TARGET_WPM / (w / state.rate))));
+  state.aiSpeedFactor = Math.min(2.3, Math.max(1.0, state.aiSpeedFactor * adj));
+  prefs.aiSpeedFactor2 = Math.round(state.aiSpeedFactor * 1000) / 1000;
+  savePrefs();
+  applyAiRate();
 }
 function meterPause() {
   if (!state.meter.pausedAt) state.meter.pausedAt = performance.now();
@@ -941,7 +952,7 @@ function meterResume() {
 }
 function measuredWpm() {
   const m = state.meter;
-  const ms = performance.now() - m.t0 - m.pausedMs;
+  const ms = performance.now() - m.t0 - m.pausedMs - (m.loadMs || 0);
   if (m.words < 12 || ms < 4000) return 0;
   return Math.round(m.words / (ms / 60000));
 }
@@ -1058,7 +1069,7 @@ function runVoiceTest() {
     `使う声: 女性 ${pickBrowserVoice(profile, 'f').voice ? voiceLabel(pickBrowserVoice(profile, 'f').voice) : '端末の既定'} ／ 男性 ${pickBrowserVoice(profile, 'm').voice ? voiceLabel(pickBrowserVoice(profile, 'm').voice) : '端末の既定'}`,
     `高音質(★)の英語の声: ${en.filter(isHighQuality).map((v) => v.name).join(', ') || 'なし'}`,
     `鳴らなかった声: ${badVoices.size}件`,
-    `AI音声の速さ補正: ×${(state.aiSpeedFactor || 1).toFixed(2)}（無音カット: ${state.aiTrimOk === null ? '未使用' : state.aiTrimOk ? '有効' : '失敗'}）`,
+    `AI音声の速さ補正: ×${(state.aiSpeedFactor || 1).toFixed(2)}（無音カット: ${state.aiTrimOk === null ? 'まだAI音声を再生していません' : state.aiTrimOk ? '有効' : '失敗'}）`,
     `iOS消音対策: ${navigator.audioSession ? '有効' : '非対応のOS'}`,
   ];
   el.textContent = lines.join('\n');
@@ -1170,6 +1181,7 @@ async function speakAI(idx, token, engine) {
   const req = buildTtsRequest(item, engine);
   const needsFetch = !ttsMemCache.has(req.key);
   if (needsFetch) updatePlayButtonUI('loading');
+  const waitStart = performance.now();
   let blob;
   try {
     blob = await fetchTtsBlob(req);
@@ -1197,6 +1209,9 @@ async function speakAI(idx, token, engine) {
   try {
     await ttsAudio.play();
     applyAiRate();
+    // 通信・音声作成の待ち時間は「話す速さ」の測定から除く（最初の1文の読み込み等）
+    const waited = performance.now() - waitStart;
+    if (waited > 150) state.meter.loadMs += waited - 150;
   } catch (e) {
     if (token !== state.playToken) return;
     state.isPaused = true;
@@ -1226,7 +1241,7 @@ const AI_TARGET_WPM = 200; // 実機で「×1.25がネイティブ並み」と�
 const processedCache = new Map();
 let audioCtx = null;
 state.aiSpeedFactor = prefs.aiSpeedFactor2 || 1.4;
-state.aiTrimOk = null;
+state.aiTrimOk = typeof prefs.aiTrimOk === 'boolean' ? prefs.aiTrimOk : null;
 
 function aiPlaybackRate() {
   return Math.min(3, Math.max(0.5, state.rate * (state.aiSpeedFactor || 1)));
@@ -1253,16 +1268,18 @@ async function processTtsAudio(key, blob, text) {
     const words = countWords(text);
     if (words >= 5 && dur > 0.5) {
       const clipWpm = words / (dur / 60);
-      const f = Math.min(1.9, Math.max(1.0, AI_TARGET_WPM / clipWpm));
+      const f = Math.min(2.3, Math.max(1.0, AI_TARGET_WPM / clipWpm));
       state.aiSpeedFactor = state.aiSpeedFactor * 0.7 + f * 0.3; // 文ごとの速さのブレを平均化
       prefs.aiSpeedFactor2 = Math.round(state.aiSpeedFactor * 1000) / 1000;
       savePrefs();
     }
     result = { url: URL.createObjectURL(encodeWav(buf, start, end)), trimmed: true };
     state.aiTrimOk = true;
+    prefs.aiTrimOk = true;
   } catch (e) {
     result = { url: URL.createObjectURL(blob), trimmed: false };
     state.aiTrimOk = false;
+    prefs.aiTrimOk = false;
   }
   processedCache.set(key, result);
   return result;
