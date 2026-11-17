@@ -1,7 +1,7 @@
 /* シャドトレ - 英語シャドーイング（PWA版） */
 'use strict';
 
-const APP_VERSION = '2.0.4';
+const APP_VERSION = '2.1.0';
 
 /* =========================================================
  * 1. 声・地域（訛り）プロファイル
@@ -820,11 +820,10 @@ function setPlaybackRate(newRate, syncSlider = true) {
   });
 
   // AI音声は再生中の音声にそのまま反映（音程は保ったまま）
-  ttsAudio.defaultPlaybackRate = clamped;
-  ttsAudio.playbackRate = clamped;
+  applyAiRate();
 
   if (state.isPlaying && !state.isPaused) {
-    setStatus(`再生中 (${clamped.toFixed(2)}x)`);
+    setStatus(playingStatusText());
     if (state.lastEngineUsed === 'browser') {
       clearTimeout(state.rateDebounce);
       state.rateDebounce = setTimeout(() => restartIfPlaying(), 250);
@@ -844,6 +843,7 @@ function togglePlayPause() {
   unlockAudio();
   if (state.isPlaying && !state.isPaused) {
     state.isPaused = true;
+    meterPause();
     if (state.lastEngineUsed === 'browser') window.speechSynthesis && window.speechSynthesis.pause();
     else ttsAudio.pause();
     updatePlayButtonUI('paused');
@@ -851,15 +851,16 @@ function togglePlayPause() {
     releaseWakeLock();
   } else if (state.isPlaying && state.isPaused) {
     state.isPaused = false;
+    meterResume();
     updatePlayButtonUI('playing');
-    setStatus(`再生中 (${state.rate.toFixed(2)}x)`);
+    setStatus(playingStatusText());
     requestWakeLock();
     if (state.lastEngineUsed === 'browser') {
       const ss = window.speechSynthesis;
       if (ss && ss.paused && ss.speaking) ss.resume();
       else speakSentenceAtIndex(Math.max(0, state.currentSentenceIndex));
     } else if (ttsAudio.src && !ttsAudio.ended) {
-      ttsAudio.playbackRate = state.rate;
+      applyAiRate();
       ttsAudio.play().catch(() => speakSentenceAtIndex(Math.max(0, state.currentSentenceIndex)));
     } else {
       speakSentenceAtIndex(Math.max(0, state.currentSentenceIndex));
@@ -876,6 +877,7 @@ function playFromSentence(index) {
   state.isPlaying = true;
   state.isPaused = false;
   state.silentRetries = 0;
+  meterReset();
   maybeShowMuteHint();
   updatePlayButtonUI('playing');
   requestWakeLock();
@@ -911,7 +913,7 @@ function speakSentenceAtIndex(idx) {
   state.currentSentenceIndex = idx;
   highlightActiveSentence(idx);
   updatePlaybackProgress();
-  setStatus(`再生中 (${state.rate.toFixed(2)}x)`);
+  setStatus(playingStatusText());
 
   const engine = resolveEngine();
   if (engine === 'browser') speakBrowser(idx, token);
@@ -920,7 +922,32 @@ function speakSentenceAtIndex(idx) {
 
 function goNextAfter(idx, token) {
   if (token !== state.playToken || !state.isPlaying || state.isPaused) return;
+  const item = state.sentences[idx];
+  if (item) state.meter.words += countWords(item.text);
   speakSentenceAtIndex(idx + 1);
+}
+
+/* 実測WPM：再生開始からの「読んだ単語数 ÷ 経過時間（文の間の待ち時間も含む）」 */
+state.meter = { t0: 0, words: 0, pausedAt: 0, pausedMs: 0 };
+function meterReset() {
+  state.meter = { t0: performance.now(), words: 0, pausedAt: 0, pausedMs: 0 };
+}
+function meterPause() {
+  if (!state.meter.pausedAt) state.meter.pausedAt = performance.now();
+}
+function meterResume() {
+  if (state.meter.pausedAt) state.meter.pausedMs += performance.now() - state.meter.pausedAt;
+  state.meter.pausedAt = 0;
+}
+function measuredWpm() {
+  const m = state.meter;
+  const ms = performance.now() - m.t0 - m.pausedMs;
+  if (m.words < 12 || ms < 4000) return 0;
+  return Math.round(m.words / (ms / 60000));
+}
+function playingStatusText() {
+  const w = measuredWpm();
+  return `再生中 (${state.rate.toFixed(2)}x)` + (w ? ` ・実測 約${w} WPM` : '');
 }
 
 /* --- 標準ブラウザ音声 --- */
@@ -1084,6 +1111,7 @@ function buildTtsRequest(item, engine) {
     `Voice: ${profile.persona[gender]}`,
     ACCENT_GUIDE[profile.accent],
     'Delivery: natural, human, conversational, like a real online business meeting. Natural intonation and connected speech (linking, reductions) as a real speaker would use.',
+    'Pace: a fluent native speaker at normal conversational speed, about 170 words per minute. Keep it moving; no slow or careful reading, no long pauses, and no silence before or after the sentence.',
     'Read the text exactly as written. Do not add, skip or change any words.',
   ].join('\n');
   return { engine: 'openai', voice, model, instructions, text: item.text, key: `oa|${model}|${voice}|${profile.accent}|${gender}|${item.text}` };
@@ -1157,18 +1185,17 @@ async function speakAI(idx, token, engine) {
   if (token !== state.playToken) return;
   updatePlayButtonUI(state.isPaused ? 'paused' : 'playing');
 
-  if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
-  currentAudioUrl = URL.createObjectURL(blob);
-  ttsAudio.src = currentAudioUrl;
-  ttsAudio.defaultPlaybackRate = state.rate;
-  ttsAudio.playbackRate = state.rate;
+  const proc = await processTtsAudio(req.key, blob, item.text);
+  if (token !== state.playToken) return;
+  ttsAudio.src = proc.url;
+  applyAiRate();
   ttsAudio.preservesPitch = true;
   ttsAudio.webkitPreservesPitch = true;
   ttsAudio.onended = () => goNextAfter(idx, token);
   if (state.isPaused) return;
   try {
     await ttsAudio.play();
-    ttsAudio.playbackRate = state.rate;
+    applyAiRate();
   } catch (e) {
     if (token !== state.playToken) return;
     state.isPaused = true;
@@ -1176,9 +1203,106 @@ async function speakAI(idx, token, engine) {
     setStatus('▶ をタップして再生');
     return;
   }
-  // 次の文を先に作っておく（途切れ防止）
-  const next = state.sentences[idx + 1];
-  if (next) fetchTtsBlob(buildTtsRequest(next, engine)).catch(() => {});
+  // 次の3文を先に作って加工しておく（文の間の待ち時間をなくす）
+  prefetchAhead(idx, engine, 3);
+}
+
+function prefetchAhead(idx, engine, n) {
+  let chain = Promise.resolve();
+  for (let k = 1; k <= n; k++) {
+    const next = state.sentences[idx + k];
+    if (!next) break;
+    const r = buildTtsRequest(next, engine);
+    if (processedCache.has(r.key)) continue;
+    chain = chain.then(() => fetchTtsBlob(r).then((b) => processTtsAudio(r.key, b, next.text))).catch(() => {});
+  }
+}
+
+/* ---- AI音声の後処理 ----
+ * 1) 音声の前後に入っている無音を削る（文と文の間が間延びする一番の原因）
+ * 2) 実際の話す速さを測り、×1.0 でネイティブの普通の速さ（約165 WPM）になるよう基準速度を補正 */
+const AI_TARGET_WPM = 165;
+const processedCache = new Map();
+let audioCtx = null;
+state.aiSpeedFactor = prefs.aiSpeedFactor || 1.15;
+
+function aiPlaybackRate() {
+  return Math.min(3, Math.max(0.5, state.rate * (state.aiSpeedFactor || 1)));
+}
+function applyAiRate() {
+  const r = aiPlaybackRate();
+  ttsAudio.defaultPlaybackRate = r;
+  ttsAudio.playbackRate = r;
+}
+
+async function processTtsAudio(key, blob, text) {
+  if (processedCache.has(key)) return processedCache.get(key);
+  let result;
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const buf = await new Promise((resolve, reject) => {
+      blob.arrayBuffer().then((ab) => {
+        const p = audioCtx.decodeAudioData(ab, resolve, reject);
+        if (p && p.then) p.then(resolve, reject);
+      }, reject);
+    });
+    const { start, end } = findSpeechBounds(buf);
+    const dur = (end - start) / buf.sampleRate;
+    const words = countWords(text);
+    if (words >= 5 && dur > 0.5) {
+      const clipWpm = words / (dur / 60);
+      const f = Math.min(1.45, Math.max(1.0, AI_TARGET_WPM / clipWpm));
+      state.aiSpeedFactor = state.aiSpeedFactor * 0.7 + f * 0.3; // 文ごとの速さのブレを平均化
+      prefs.aiSpeedFactor = Math.round(state.aiSpeedFactor * 1000) / 1000;
+      savePrefs();
+    }
+    result = { url: URL.createObjectURL(encodeWav(buf, start, end)), trimmed: true };
+  } catch (e) {
+    result = { url: URL.createObjectURL(blob), trimmed: false };
+  }
+  processedCache.set(key, result);
+  return result;
+}
+
+function findSpeechBounds(buf) {
+  const ch = buf.getChannelData(0);
+  const sr = buf.sampleRate;
+  const win = Math.round(sr * 0.01);
+  let peak = 0;
+  for (let i = 0; i < ch.length; i += 4) peak = Math.max(peak, Math.abs(ch[i]));
+  const th = Math.max(0.006, peak * 0.04);
+  const loud = (i) => {
+    let m = 0;
+    for (let j = i; j < Math.min(ch.length, i + win); j++) m = Math.max(m, Math.abs(ch[j]));
+    return m > th;
+  };
+  let start = 0;
+  while (start < ch.length && !loud(start)) start += win;
+  let end = ch.length - win;
+  while (end > start && !loud(end)) end -= win;
+  const pad = Math.round(sr * 0.04); // 語頭・語尾が切れないよう少し残す
+  start = Math.max(0, start - pad);
+  end = Math.min(ch.length, end + win + Math.round(sr * 0.06));
+  if (end - start < sr * 0.2) return { start: 0, end: ch.length };
+  return { start, end };
+}
+
+function encodeWav(buf, start, end) {
+  const sr = buf.sampleRate;
+  const n = end - start;
+  const ch = buf.getChannelData(0);
+  const out = new ArrayBuffer(44 + n * 2);
+  const v = new DataView(out);
+  const w = (o, str) => [...str].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) {
+    const x = Math.max(-1, Math.min(1, ch[start + i]));
+    v.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true);
+  }
+  return new Blob([out], { type: 'audio/wav' });
 }
 
 function shortErr(err) {

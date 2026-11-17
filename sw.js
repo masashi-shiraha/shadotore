@@ -3,7 +3,7 @@
  * - OCRエンジン（vendor/）は初回使用時にキャッシュ
  * - 外部API（OpenAI / Gemini / ElevenLabs）は一切キャッシュしない
  * 更新時は VERSION を上げる */
-const VERSION = 'v2.0.4';
+const VERSION = 'v2.1.0';
 const SHELL_CACHE = `shadotore-shell-${VERSION}`;
 const VENDOR_CACHE = 'shadotore-vendor-v5';
 
