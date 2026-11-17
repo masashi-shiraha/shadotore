@@ -1,7 +1,7 @@
 /* シャドトレ - 英語シャドーイング（PWA版） */
 'use strict';
 
-const APP_VERSION = '2.1.2';
+const APP_VERSION = '2.1.3';
 
 /* =========================================================
  * 1. 声・地域（訛り）プロファイル
@@ -768,6 +768,9 @@ function updateEngineBadge() {
     effective = settings.openaiKey ? 'openai' : 'elevenlabs-fallback';
   }
   state.activeEngine = engine;
+  // 「端末の声を自分で選ぶ」は標準音声のときだけ意味があるので、AI音声のときは隠す
+  const mw = document.getElementById('manualVoiceWrap');
+  if (mw) mw.classList.toggle('hidden', effective !== 'browser');
 
   const map = {
     openai: ['🎙 AI音声 (OpenAI)', 'bg-violet-100 text-violet-700'],
