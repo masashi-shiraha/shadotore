@@ -1,7 +1,7 @@
 /* シャドトレ - 英語シャドーイング（PWA版） */
 'use strict';
 
-const APP_VERSION = '2.1.0';
+const APP_VERSION = '2.1.1';
 
 /* =========================================================
  * 1. 声・地域（訛り）プロファイル
@@ -1058,6 +1058,7 @@ function runVoiceTest() {
     `使う声: 女性 ${pickBrowserVoice(profile, 'f').voice ? voiceLabel(pickBrowserVoice(profile, 'f').voice) : '端末の既定'} ／ 男性 ${pickBrowserVoice(profile, 'm').voice ? voiceLabel(pickBrowserVoice(profile, 'm').voice) : '端末の既定'}`,
     `高音質(★)の英語の声: ${en.filter(isHighQuality).map((v) => v.name).join(', ') || 'なし'}`,
     `鳴らなかった声: ${badVoices.size}件`,
+    `AI音声の速さ補正: ×${(state.aiSpeedFactor || 1).toFixed(2)}（無音カット: ${state.aiTrimOk === null ? '未使用' : state.aiTrimOk ? '有効' : '失敗'}）`,
     `iOS消音対策: ${navigator.audioSession ? '有効' : '非対応のOS'}`,
   ];
   el.textContent = lines.join('\n');
@@ -1221,10 +1222,11 @@ function prefetchAhead(idx, engine, n) {
 /* ---- AI音声の後処理 ----
  * 1) 音声の前後に入っている無音を削る（文と文の間が間延びする一番の原因）
  * 2) 実際の話す速さを測り、×1.0 でネイティブの普通の速さ（約165 WPM）になるよう基準速度を補正 */
-const AI_TARGET_WPM = 165;
+const AI_TARGET_WPM = 200; // 実機で「×1.25がネイティブ並み」との評価を受けて165→200に変更
 const processedCache = new Map();
 let audioCtx = null;
-state.aiSpeedFactor = prefs.aiSpeedFactor || 1.15;
+state.aiSpeedFactor = prefs.aiSpeedFactor2 || 1.4;
+state.aiTrimOk = null;
 
 function aiPlaybackRate() {
   return Math.min(3, Math.max(0.5, state.rate * (state.aiSpeedFactor || 1)));
@@ -1251,14 +1253,16 @@ async function processTtsAudio(key, blob, text) {
     const words = countWords(text);
     if (words >= 5 && dur > 0.5) {
       const clipWpm = words / (dur / 60);
-      const f = Math.min(1.45, Math.max(1.0, AI_TARGET_WPM / clipWpm));
+      const f = Math.min(1.9, Math.max(1.0, AI_TARGET_WPM / clipWpm));
       state.aiSpeedFactor = state.aiSpeedFactor * 0.7 + f * 0.3; // 文ごとの速さのブレを平均化
-      prefs.aiSpeedFactor = Math.round(state.aiSpeedFactor * 1000) / 1000;
+      prefs.aiSpeedFactor2 = Math.round(state.aiSpeedFactor * 1000) / 1000;
       savePrefs();
     }
     result = { url: URL.createObjectURL(encodeWav(buf, start, end)), trimmed: true };
+    state.aiTrimOk = true;
   } catch (e) {
     result = { url: URL.createObjectURL(blob), trimmed: false };
+    state.aiTrimOk = false;
   }
   processedCache.set(key, result);
   return result;
