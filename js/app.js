@@ -1,7 +1,7 @@
 /* シャドトレ - 英語シャドーイング（PWA版） */
 'use strict';
 
-const APP_VERSION = '2.1.3';
+const APP_VERSION = '2.2.0';
 
 /* =========================================================
  * 1. 声・地域（訛り）プロファイル
@@ -938,13 +938,13 @@ function meterReset() {
 }
 /* 実測WPMを見ながら補正を微調整し、×1.0 で目標（約200 WPM）に近づける。文の間のすき間も含めて合わせる */
 function tuneAiSpeed() {
+  // 文の間のすき間の分だけ、話す速さの目標をごく少しずつ補う（急に変えるとムラになるので±2%まで）
   const w = measuredWpm();
   if (!w) return;
-  const adj = Math.min(1.04, Math.max(0.96, Math.sqrt(AI_TARGET_WPM / (w / state.rate))));
-  state.aiSpeedFactor = Math.min(2.3, Math.max(1.0, state.aiSpeedFactor * adj));
-  prefs.aiSpeedFactor2 = Math.round(state.aiSpeedFactor * 1000) / 1000;
+  const adj = Math.min(1.02, Math.max(0.98, Math.sqrt(AI_TARGET_WPM / (w / state.rate))));
+  state.gapComp = Math.min(1.3, Math.max(1.0, state.gapComp * adj));
+  prefs.aiGapComp = Math.round(state.gapComp * 1000) / 1000;
   savePrefs();
-  applyAiRate();
 }
 function meterPause() {
   if (!state.meter.pausedAt) state.meter.pausedAt = performance.now();
@@ -1072,7 +1072,7 @@ function runVoiceTest() {
     `使う声: 女性 ${pickBrowserVoice(profile, 'f').voice ? voiceLabel(pickBrowserVoice(profile, 'f').voice) : '端末の既定'} ／ 男性 ${pickBrowserVoice(profile, 'm').voice ? voiceLabel(pickBrowserVoice(profile, 'm').voice) : '端末の既定'}`,
     `高音質(★)の英語の声: ${en.filter(isHighQuality).map((v) => v.name).join(', ') || 'なし'}`,
     `鳴らなかった声: ${badVoices.size}件`,
-    `AI音声の速さ補正: ×${(state.aiSpeedFactor || 1).toFixed(2)}（無音カット: ${state.aiTrimOk === null ? 'まだAI音声を再生していません' : state.aiTrimOk ? '有効' : '失敗'}）`,
+    `AI音声の速さ補正: 平均×${(state.aiSpeedFactor || 1).toFixed(2)}・すき間補い×${(state.gapComp || 1).toFixed(2)}（無音カット: ${state.aiTrimOk === null ? 'まだAI音声を再生していません' : state.aiTrimOk ? '有効' : '失敗'}）`,
     `iOS消音対策: ${navigator.audioSession ? '有効' : '非対応のOS'}`,
   ];
   el.textContent = lines.join('\n');
@@ -1204,6 +1204,7 @@ async function speakAI(idx, token, engine) {
   const proc = await processTtsAudio(req.key, blob, item.text);
   if (token !== state.playToken) return;
   ttsAudio.src = proc.url;
+  state.clipFactor = clipFactorFor(proc);
   applyAiRate();
   ttsAudio.preservesPitch = true;
   ttsAudio.webkitPreservesPitch = true;
@@ -1240,14 +1241,25 @@ function prefetchAhead(idx, engine, n) {
 /* ---- AI音声の後処理 ----
  * 1) 音声の前後に入っている無音を削る（文と文の間が間延びする一番の原因）
  * 2) 実際の話す速さを測り、×1.0 でネイティブの普通の速さ（約165 WPM）になるよう基準速度を補正 */
-const AI_TARGET_WPM = 200; // 実機で「×1.25がネイティブ並み」との評価を受けて165→200に変更
+const AI_TARGET_WPM = 190; // 実機評価：200だと少し速い → 190（ネイティブ基準150〜200の上寄り）
 const processedCache = new Map();
 let audioCtx = null;
-state.aiSpeedFactor = prefs.aiSpeedFactor2 || 1.4;
+state.aiSpeedFactor = prefs.aiSpeedFactor3 || 1.4; // 文ごとの補正の平均（短い文用）
+state.gapComp = prefs.aiGapComp || 1.06; // 文の間のすき間の補い
+state.clipFactor = 0;
 state.aiTrimOk = typeof prefs.aiTrimOk === 'boolean' ? prefs.aiTrimOk : null;
 
 function aiPlaybackRate() {
-  return Math.min(3, Math.max(0.5, state.rate * (state.aiSpeedFactor || 1)));
+  return Math.min(3, Math.max(0.5, state.rate * (state.clipFactor || state.aiSpeedFactor || 1)));
+}
+/* 文ごとの速さのムラ取り：AIは文によって速く読んだり遅く読んだりするので、
+ * 1文ずつ実際の話す速さを測り、どの文も同じ速さ（目標WPM）に揃える */
+function clipFactorFor(proc) {
+  const avg = state.aiSpeedFactor || 1.4;
+  if (!proc || !proc.clipWpm || proc.words < 4) return avg * (state.gapComp || 1) / 1.06;
+  const want = (AI_TARGET_WPM * (state.gapComp || 1)) / proc.clipWpm;
+  const f = want * 0.85 + avg * (state.gapComp || 1) / 1.06 * 0.15; // ほんの少し平均に寄せて極端な変化を防ぐ
+  return Math.min(2.5, Math.max(0.8, f));
 }
 function applyAiRate() {
   const r = aiPlaybackRate();
@@ -1271,12 +1283,12 @@ async function processTtsAudio(key, blob, text) {
     const words = countWords(text);
     if (words >= 5 && dur > 0.5) {
       const clipWpm = words / (dur / 60);
-      const f = Math.min(2.3, Math.max(1.0, AI_TARGET_WPM / clipWpm));
-      state.aiSpeedFactor = state.aiSpeedFactor * 0.7 + f * 0.3; // 文ごとの速さのブレを平均化
-      prefs.aiSpeedFactor2 = Math.round(state.aiSpeedFactor * 1000) / 1000;
+      const f = Math.min(2.3, Math.max(1.0, (AI_TARGET_WPM * 1.06) / clipWpm));
+      state.aiSpeedFactor = state.aiSpeedFactor * 0.8 + f * 0.2;
+      prefs.aiSpeedFactor3 = Math.round(state.aiSpeedFactor * 1000) / 1000;
       savePrefs();
     }
-    result = { url: URL.createObjectURL(encodeWav(buf, start, end)), trimmed: true };
+    result = { url: URL.createObjectURL(encodeWav(buf, start, end)), trimmed: true, words, clipWpm: words >= 4 && dur > 0.4 ? words / (dur / 60) : 0 };
     state.aiTrimOk = true;
     prefs.aiTrimOk = true;
   } catch (e) {
