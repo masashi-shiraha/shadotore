@@ -1,7 +1,7 @@
 /* シャドトレ - 英語シャドーイング（PWA版） */
 'use strict';
 
-const APP_VERSION = '2.2.1';
+const APP_VERSION = '2.2.2';
 
 /* =========================================================
  * 1. 声・地域（訛り）プロファイル
@@ -908,7 +908,22 @@ function haltAudio() {
 function speakSentenceAtIndex(idx) {
   if (!state.isPlaying) return;
   if (idx >= state.sentences.length) {
-    if (state.isLooping) return speakSentenceAtIndex(0);
+    if (state.isLooping) {
+      // リピート時は最後の文のあとに少しだけ間を空けて、最初に戻ったと分かるようにする
+      haltAudio();
+      const token = state.playToken;
+      state.currentSentenceIndex = -1;
+      highlightActiveSentence(-1);
+      updatePlaybackProgress();
+      setStatus('🔁 もう一度最初から…');
+      clearTimeout(state.loopGapTimer);
+      state.loopGapTimer = setTimeout(() => {
+        if (token !== state.playToken || !state.isPlaying || state.isPaused) return;
+        meterReset(); // 間の時間は実測WPMに含めない
+        speakSentenceAtIndex(0);
+      }, LOOP_GAP_MS);
+      return;
+    }
     return stopSpeech(true);
   }
   haltAudio();
@@ -922,6 +937,8 @@ function speakSentenceAtIndex(idx) {
   if (engine === 'browser') speakBrowser(idx, token);
   else speakAI(idx, token, engine);
 }
+
+const LOOP_GAP_MS = 1200; // リピートの区切りの間（ミリ秒）
 
 function goNextAfter(idx, token) {
   if (token !== state.playToken || !state.isPlaying || state.isPaused) return;
